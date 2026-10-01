@@ -222,6 +222,7 @@ function api(token, action, payload) {
   const p=payload||{};
   switch(action) {
     case 'login': return login(p.username,p.password);
+    case 'getSession': return getSession(token);
     case 'logout': return logout(token);
     case 'reports': return getReports(token,p);
     case 'accounting': return getAccountingSummary(token,p);
