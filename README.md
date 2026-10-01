@@ -1,42 +1,31 @@
-# Business POS System
+# Business POS + Inventory + Accounting System
 
-Google Apps Script + Google Sheets based Business POS, Inventory, Sales, Purchase, Customer, Supplier and Finance foundation.
+Production-oriented Google Apps Script + Google Sheets business management system based on the supplied Master Prompt.
 
-## Stack
-- Google Apps Script Web App
-- Google Sheets database
-- Google Drive-ready architecture
-- HTML/CSS/Vanilla JavaScript
-- Mobile-first responsive UI
+## Architecture
+- Backend: Google Apps Script (Code.gs)
+- Database: Google Sheets
+- Storage: Google Drive
+- Frontend: HTML5/CSS3/Vanilla JavaScript
+- Render: Node.js Web Service wrapper/proxy for the same frontend
 
-## Repository
-This repository contains the canonical source for the Apps Script backend and web interface.
+## Implemented modules
+Authentication and sessions, role/permission checks, Products, Categories, Brands, Variants, Customers, Suppliers, POS Sales, Sales Returns, Purchases, Purchase Returns, Inventory, Stock Movements, Payments, Accounts, Expenses, Dashboard, Reports, Profit/Loss, Accounting summary, Settings, Sync/Push state, System Health, Audit Logs, System Logs, Backup/Restore, Developer Code Copy/Draft.
 
-## Setup
-1. Create a Google Spreadsheet (or let the script create one automatically).
-2. Open **Extensions → Apps Script**.
-3. Add `Code.gs`, `Index.html`, and `appsscript.json`.
-4. In Apps Script, run:
-   ```javascript
-   setupDatabase("admin","CHANGE-THIS-STRONG-PASSWORD","your@email.com")
-   ```
+## Apps Script setup
+1. Create/open a Google Sheet.
+2. Open Extensions -> Apps Script.
+3. Add Code.gs, Index.html, appsscript.json.
+4. Run setupDatabase("admin","CHANGE-THIS-STRONG-PASSWORD","your@email.com").
 5. Authorize the script.
-6. Deploy → New deployment → Web app.
-7. Execute as: **Me**.
-8. Choose the appropriate access setting for your organization.
-9. Open the Web App URL and log in.
+6. Deploy as a Web App, executing as the owner, and copy the /exec URL.
 
-## Database
-`setupDatabase()` creates the structured Sheets tables defined in `CONFIG.SHEETS`, including Products, Sales, Sale_Items, Purchases, Purchase_Items, Customers, Suppliers, Stock, Payments, Expenses, accounting tables, audit logs and system logs.
+## Render Web Service
+Render serves Index.html through server.js. Set the Render environment variable GAS_WEB_APP_URL to your Apps Script /exec URL.
+The Render server proxies /api requests to Apps Script doPost(), so the same frontend works both inside Apps Script and on Render.
 
-## Security
-- Passwords are stored as SHA-256 hashes rather than plaintext.
-- Sessions use Apps Script CacheService with expiry.
-- Role/permission checks are centralized.
-- Sensitive runtime Script Properties are not exposed to the browser.
-- Change the setup password immediately and do not commit credentials.
+## Data safety
+Database initialization only creates missing sheets/headers and default settings/roles; it does not intentionally overwrite existing rows. Product stock changes are recorded in Stock_Movements.
 
-## Current foundation
-Working backend/API foundation includes authentication, database setup, products, stock, sales, purchases, customers, suppliers, expenses, dashboard, settings, audit logging and health/sync controls.
-
-The Master Prompt's remaining advanced modules should be implemented incrementally without breaking these core flows.
+## Developer
+The authorized Developer panel can load Code.gs from the configured GitHub source, copy/download it, and save a non-deploying draft in Script Properties.
