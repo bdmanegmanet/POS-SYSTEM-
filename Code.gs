@@ -755,9 +755,13 @@ function getNotifications(token){requireSession_(token,'view');return {rows:getR
    UTILITIES
 ========================= */
 function getFullCode_(){
-  // Admin code-copy feature: Code.gs itself is not directly readable by Apps Script at runtime.
-  // The repository copy is the canonical source. This safe runtime message avoids exposing secrets.
-  return 'Code.gs source is maintained in the GitHub repository. For security, runtime credentials and Script Properties are never exposed here.';
+  const configured=PropertiesService.getScriptProperties().getProperty('CODE_SOURCE_URL') ||
+    'https://raw.githubusercontent.com/bdmanegmanet/POS-SYSTEM-/main/Code.gs';
+  try {
+    const response=UrlFetchApp.fetch(configured,{muteHttpExceptions:true,followRedirects:true});
+    if(response.getResponseCode()>=200 && response.getResponseCode()<300) return response.getContentText();
+  } catch(e) { logSystem_('WARN','CODE_FETCH',String(e)); }
+  return 'Code.gs source could not be loaded. Configure CODE_SOURCE_URL in Script Properties.';
 }
 function getRows_(sheet){return getSheetRows_(getDb_().getSheetByName(sheet));}
 function getSheetRows_(sh){if(!sh||sh.getLastRow()<2)return [];const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0];return sh.getRange(2,1,sh.getLastRow()-1,sh.getLastColumn()).getValues().map(row=>{const o={};h.forEach((k,i)=>o[k]=row[i]);return o;});}
