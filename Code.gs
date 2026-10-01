@@ -228,6 +228,12 @@ function api(token, action, payload) {
     case 'saveSettings': return saveSettings(token,p);
     case 'code': return getCode(token);
     case 'health': return systemHealth(token);
+    case 'saleItems': return getSaleItems(token,p.Sale_ID);
+    case 'returnSale': return returnSale(token,p);
+    case 'customerPayment': return createCustomerPayment(token,p);
+    case 'supplierPayment': return createSupplierPayment(token,p);
+    case 'invoice': return invoiceData(token,p.Sale_ID);
+    case 'searchProduct': return searchProduct(token,p.q);
     case 'setup': return setupDatabase(p.username,p.password,p.email);
     default: throw new Error('Unknown API action: '+action);
   }
@@ -383,6 +389,75 @@ function saveExpense(token,p) {
   audit_(s.username,p.Expense_ID?'UPDATE':'CREATE','EXPENSES',d.Expense_ID,'',JSON.stringify(d),''); return d;
 }
 function getExpenses(token,p){requireSession_(token,'view'); return {rows:filterRows_('Expenses',p)};}
+
+
+/* =========================
+   RETURNS / PAYMENTS / INVOICE
+========================= */
+function getSaleItems(token,saleId){
+  requireSession_(token,'view');
+  if(!saleId) throw new Error('Sale ID required.');
+  return {rows:getRows_('Sale_Items').filter(r=>String(r.Sale_ID)===String(saleId))};
+}
+function returnSale(token,p){
+  const s=requireSession_(token,'create');
+  if(!p.Sale_ID || !Array.isArray(p.items) || !p.items.length) throw new Error('Sale and return items are required.');
+  const sale=getRows_('Sales').find(r=>String(r.Sale_ID)===String(p.Sale_ID));
+  if(!sale) throw new Error('Sale not found.');
+  const original=getRows_('Sale_Items').filter(r=>String(r.Sale_ID)===String(p.Sale_ID));
+  let amount=0;
+  p.items.forEach(i=>{
+    const item=original.find(x=>String(x.Product_ID)===String(i.Product_ID));
+    const qty=num_(i.Qty);
+    if(!item || qty<=0 || qty>num_(item.Qty)) throw new Error('Invalid return quantity for '+(i.Product_ID||'product'));
+    amount += qty*num_(item.Unit_Price);
+  });
+  const rid=id_('RET');
+  appendRow_('Sales_Returns',{Return_ID:rid,Sale_ID:p.Sale_ID,Customer_ID:sale.Customer_ID||'',Amount:amount,Reason:p.Reason||'',Return_Date:now_(),Created_By:s.username,Created_At:now_()});
+  p.items.forEach(i=>{
+    appendRow_('Sales_Return_Items',{Return_Item_ID:id_('RIT'),Return_ID:rid,Product_ID:i.Product_ID,Qty:num_(i.Qty),Amount:num_(i.Qty)*num_(i.Unit_Price)});
+    updateStock_(i.Product_ID,num_(i.Qty),'SALES_RETURN',rid,s.username);
+  });
+  if(sale.Customer_ID) updatePartyDue_('Customers','Customer_ID',sale.Customer_ID,-amount,s.username);
+  audit_(s.username,'CREATE','SALES_RETURN',rid,'',JSON.stringify(p),'');
+  return {success:true,returnId:rid,amount};
+}
+function createCustomerPayment(token,p){
+  const s=requireSession_(token,'create');
+  required_(p,['Customer_ID','Amount']);
+  const amount=num_(p.Amount); if(amount<=0) throw new Error('Amount must be greater than zero.');
+  const c=getRows_('Customers').find(r=>String(r.Customer_ID)===String(p.Customer_ID));
+  if(!c) throw new Error('Customer not found.');
+  if(amount>num_(c.Current_Due)) throw new Error('Payment exceeds customer due.');
+  updatePartyDue_('Customers','Customer_ID',p.Customer_ID,-amount,s.username);
+  recordPayment_(s.username,'Customer',p.Customer_ID,p.Reference_ID||'',amount,p.Method||'Cash','IN');
+  return {success:true,amount,newDue:num_(c.Current_Due)-amount};
+}
+function createSupplierPayment(token,p){
+  const s=requireSession_(token,'create');
+  required_(p,['Supplier_ID','Amount']);
+  const amount=num_(p.Amount); if(amount<=0) throw new Error('Amount must be greater than zero.');
+  const sp=getRows_('Suppliers').find(r=>String(r.Supplier_ID)===String(p.Supplier_ID));
+  if(!sp) throw new Error('Supplier not found.');
+  if(amount>num_(sp.Current_Due)) throw new Error('Payment exceeds supplier due.');
+  updatePartyDue_('Suppliers','Supplier_ID',p.Supplier_ID,-amount,s.username);
+  recordPayment_(s.username,'Supplier',p.Supplier_ID,p.Reference_ID||'',amount,p.Method||'Cash','OUT');
+  return {success:true,amount,newDue:num_(sp.Current_Due)-amount};
+}
+function invoiceData(token,saleId){
+  requireSession_(token,'view');
+  const sale=getRows_('Sales').find(r=>String(r.Sale_ID)===String(saleId));
+  if(!sale) throw new Error('Sale not found.');
+  const items=getRows_('Sale_Items').filter(r=>String(r.Sale_ID)===String(saleId));
+  const customer=getRows_('Customers').find(r=>String(r.Customer_ID)===String(sale.Customer_ID));
+  return {sale:normalize_(sale),items:items.map(normalize_),customer:customer?normalize_(customer):null,store:getSettings(token)};
+}
+function searchProduct(token,q){
+  requireSession_(token,'view');
+  q=String(q||'').trim().toLowerCase();
+  if(!q) return {rows:[]};
+  return {rows:getRows_('Products').filter(r=>r.Status!=='Deleted' && ['Product_ID','Product_Name','Barcode','SKU'].some(k=>String(r[k]||'').toLowerCase().includes(q))).slice(0,20).map(normalize_)};
+}
 
 /* =========================
    STOCK
