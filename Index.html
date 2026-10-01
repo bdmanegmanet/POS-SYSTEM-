@@ -76,7 +76,7 @@ body{background:var(--bg);color:var(--text);margin:0}
 </div>
 
 <!-- APP -->
-<div id="app" class="d-none">
+<div id="gasConfigWarning" class="alert alert-warning d-none m-3 small" role="alert"><i class="fas fa-triangle-exclamation me-2"></i><b>Backend configuration required:</b> Render-এ GAS_WEB_APP_URL সেট করা নেই। Google Apps Script Web App URL সেট না করা পর্যন্ত database operations কাজ করবে না.</div><div id="app" class="d-none">
   <!-- SIDEBAR -->
   <div id="sidebar" class="sidebar">
     <div class="sidebar-header d-flex justify-content-between align-items-center">
@@ -167,7 +167,7 @@ body{background:var(--bg);color:var(--text);margin:0}
 <script>
 // ===================== STATE & API =====================
 let STATE = { token: localStorage.getItem('pos_token'), user: JSON.parse(localStorage.getItem('pos_user')||'null'), products:[], cart:[], customers:[], suppliers:[], categories:[], brands:[], holdSales: JSON.parse(localStorage.getItem('hold_sales')||'[]'), pendingQueue: JSON.parse(localStorage.getItem('pending_queue')||'[]') };
-const API_BASE = ''; // Apps Script web app URL will be auto
+const API_BASE = '/api'; // Render server proxies requests to Google Apps Script
 
 function isAppsScript(){ return typeof google !== 'undefined' && google.script && google.script.run; }
 
@@ -196,15 +196,15 @@ function apiCall(action, data={}, method='POST'){
       return;
     }
     // Fetch mode - when deployed as Web App, endpoint is same origin
-    const url = window.location.href.split('?')[0];
-    fetch(url, { method:'POST', body: JSON.stringify(payload), headers:{'Content-Type':'application/json'} })
+    const url = API_BASE;
+    fetch(url, { method:'POST', body: JSON.stringify(payload), headers:{'Content-Type':'application/json'}, credentials:'same-origin' })
       .then(r=>r.json()).then(resolve).catch(reject);
   });
 }
 function apiGet(action, params={}){
   const qs = new URLSearchParams({action, ...params}).toString();
-  const url = window.location.href.split('?')[0] + '?' + qs;
-  return fetch(url).then(r=>r.json());
+  const url = API_BASE;
+  return fetch(url, { method:'POST', body: JSON.stringify({action, ...params, token: STATE.token}), headers:{'Content-Type':'application/json'}, credentials:'same-origin' }).then(async r=>{ const text=await r.text(); let data; try{data=JSON.parse(text)}catch(e){throw new Error('Server returned an invalid response ('+r.status+')')}; if(!r.ok || (data.success===false && data.error)) throw new Error(data.error); return data; });
 }
 
 function toast(msg, type='success'){
@@ -252,10 +252,12 @@ document.getElementById('btnSetupDB').addEventListener('click', async ()=>{
     toast(res.success? 'Database setup সফল! '+ (res.url||'') : 'Error: '+res.error, res.success?'success':'error');
   }catch(e){ toast('Setup failed: '+e.message,'error'); }
 });
+async function checkBackendConfig(){ try{ const r=await fetch('/healthz',{cache:'no-store'}); const d=await r.json(); const el=document.getElementById('gasConfigWarning'); if(el) el.classList.toggle('d-none',!!d.gasConfigured); }catch(e){} }
 function showApp(){
   document.getElementById('loginPage').classList.add('d-none');
   document.getElementById('app').classList.remove('d-none');
   document.getElementById('userName').textContent = STATE.user?.username||'Admin';
+  checkBackendConfig();
   loadInitial();
   navigate('dashboard');
 }
@@ -714,5 +716,5 @@ async function renderAccounting(){ document.getElementById('content').innerHTML 
 // Auto sync interval
 setInterval(()=>{ if(STATE.token && currentRoute==='dashboard'){ doSync(); } }, 30000);
 </script>
-</body>
+<a id="githubRepoBtn" href="https://github.com/bdmanegmanet/POS-SYSTEM-" target="_blank" rel="noopener noreferrer" aria-label="GitHub Repository" style="position:fixed;right:18px;bottom:18px;z-index:2000;background:#111827;color:#fff;padding:10px 14px;border-radius:999px;text-decoration:none;box-shadow:0 8px 24px rgba(0,0,0,.2);display:flex;align-items:center;gap:8px"><i class="fab fa-github"></i><span>GitHub</span></a></body>
 </html>
