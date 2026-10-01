@@ -82,9 +82,48 @@ async function loadProducts(){try{const r=await call('products',{search:$('searc
 function productModal(encoded){let p={};if(encoded)try{p=JSON.parse(decodeURIComponent(encoded))}catch(e){};modal('<div class="modal-head"><h3>'+(p.Product_ID?'Edit':'Add')+' Product</h3><button class="btn secondary" onclick="closeModal()">✕</button></div><div class="form-grid">'+field('Product_Name','Product Name',p.Product_Name)+field('Barcode','Barcode',p.Barcode)+field('SKU','SKU',p.SKU)+field('Category','Category',p.Category)+field('Brand','Brand',p.Brand)+field('Purchase_Price','Purchase Price',p.Purchase_Price,'number')+field('Selling_Price','Selling Price',p.Selling_Price,'number')+field('Discount_Price','Discount Price',p.Discount_Price,'number')+field('Current_Stock','Opening/Current Stock',p.Current_Stock,'number')+field('Minimum_Stock','Minimum Stock',p.Minimum_Stock||5,'number')+field('Unit','Unit',p.Unit||'pcs')+'</div><div class="actions"><button class="btn secondary" onclick="closeModal()">Cancel</button><button class="btn" onclick=saveProduct("'+(p.Product_ID||'')+'")>Save</button></div>')}
 async function saveProduct(id){const p={Product_ID:id};['Product_Name','Barcode','SKU','Category','Brand','Purchase_Price','Selling_Price','Discount_Price','Current_Stock','Minimum_Stock','Unit'].forEach(k=>p[k]=$(k)?.value);try{await call('saveProduct',p);closeModal();toast('Product saved');loadProducts()}catch(e){toast(e.message||e)}}
 async function inventory(){main('<div class="page-head"><h2>Inventory</h2></div><div class="card"><div id="table">Loading...</div></div>');try{const r=await call('products',{});$('table').innerHTML=table(r.rows,['Product_ID','Product_Name','SKU','Current_Stock','Minimum_Stock','Purchase_Price','Selling_Price','Status'])}catch(e){toast(e.message||e)}}
-async function sales(history){if(history){main('<div class="page-head"><h2>Sales History</h2></div><div class="card"><div id="table">Loading...</div></div>');try{const r=await call('sales',{});$('table').innerHTML=table(r.rows,['Invoice_No','Customer_ID','Grand_Total','Paid','Due','Payment_Method','Sale_Date','Status'])}catch(e){toast(e.message||e)}return}main('<div class="page-head"><h2>New Sale</h2></div><div class="card"><p class="muted">Select products and enter quantity.</p><div id="saleItems"></div><button class="btn secondary" onclick="addSaleItem()">+ Add Item</button><hr><div class="form-grid">'+field('saleCustomer','Customer ID')+field('salePaid','Paid Amount','0','number')+field('saleMethod','Payment Method','Cash')+'</div><div class="actions"><button class="btn" onclick="createSale()">Complete Sale</button></div></div>');addSaleItem()}
-function addSaleItem(){let i=document.createElement('div');i.className='form-grid';i.style.marginBottom='8px';i.innerHTML='<div class="field"><label>Product ID</label><input class="salePid"></div><div class="field"><label>Quantity</label><input class="saleQty" type="number" value="1" min="1"></div>'; $('saleItems').appendChild(i)}
-async function createSale(){const items=[...document.querySelectorAll('.salePid')].map((x,i)=>({Product_ID:x.value,Qty:Number(document.querySelectorAll('.saleQty')[i].value)})).filter(x=>x.Product_ID);try{const r=await call('createSale',{items,Customer_ID:$('saleCustomer').value,paid:Number($('salePaid').value||0),Payment_Method:$('saleMethod').value});toast('Sale completed: '+r.invoice);page('salesHistory')}catch(e){toast(e.message||e)}}
+async function sales(history){
+if(history){
+main('<div class="page-head"><h2>Sales History</h2><button class="btn secondary" onclick="sales(true)">↻ Refresh</button></div><div class="card"><div class="toolbar"><input id="search" placeholder="Invoice / customer / ID search..." oninput="loadSales()"></div><div id="table">Loading...</div></div>');
+loadSales(); return;
+}
+main('<div class="page-head"><h2>New Sale</h2><button class="btn secondary" onclick="page(\'salesHistory\')">Sales History</button></div><div class="card"><div class="toolbar"><input id="productSearch" placeholder="Product name / SKU / barcode" onkeydown="if(event.key===\'Enter\')searchSaleProduct()" autofocus><button class="btn secondary" onclick="searchSaleProduct()">🔎 Search</button></div><div id="productResults"></div><hr><h3>Cart</h3><div id="cart"></div><div class="form-grid" style="margin-top:15px"><div class="field"><label>Customer ID</label><input id="saleCustomer"></div><div class="field"><label>Paid Amount</label><input id="salePaid" type="number" value="0"></div><div class="field"><label>Payment Method</label><input id="saleMethod" value="Cash"></div></div><div id="saleTotal" style="text-align:right;font-size:20px;font-weight:800;margin-top:12px">Total: ৳ 0</div><div class="actions"><button class="btn" onclick="createSaleFromCart()">Complete Sale</button></div></div>');
+window.saleCart=[]; renderCart();
+}
+async function searchSaleProduct(){
+const q=$('productSearch')?.value||'';
+if(!q)return;
+try{const r=await call('searchProduct',{q});$('productResults').innerHTML=table(r.rows,['Product_Name','SKU','Barcode','Selling_Price','Current_Stock'],p=>'<button class="btn secondary" onclick="addToCart('+JSON.stringify(encodeURIComponent(JSON.stringify(p)))+')">Add</button>')}
+catch(e){toast(e.message||e)}
+}
+function addToCart(encoded){
+let p=JSON.parse(decodeURIComponent(encoded)), old=window.saleCart.find(x=>x.Product_ID===p.Product_ID);
+if(old)old.Qty++;else window.saleCart.push({Product_ID:p.Product_ID,Product_Name:p.Product_Name,Unit_Price:Number(p.Selling_Price||0),Qty:1,Stock:Number(p.Current_Stock||0)});
+renderCart();
+}
+function renderCart(){
+const el=$('cart'); if(!el)return;
+if(!window.saleCart.length){el.innerHTML='<p class="muted">Cart is empty. Search and add products above.</p>';$('saleTotal').textContent='Total: ৳ 0';return}
+el.innerHTML='<table class="table"><thead><tr><th>Product</th><th>Price</th><th>Qty</th><th>Total</th><th></th></tr></thead><tbody>'+window.saleCart.map((x,i)=>'<tr><td>'+x.Product_Name+'</td><td>'+money(x.Unit_Price)+'</td><td><input style="width:85px" type="number" min="1" max="'+x.Stock+'" value="'+x.Qty+'" onchange="updateCartQty('+i+',this.value)"></td><td>'+money(x.Unit_Price*x.Qty)+'</td><td><button class="btn danger" onclick="removeCart('+i+')">×</button></td></tr>').join('')+'</tbody></table>';
+$('saleTotal').textContent='Total: '+money(window.saleCart.reduce((a,x)=>a+x.Unit_Price*x.Qty,0));
+}
+function updateCartQty(i,v){const q=Math.max(1,Number(v||1));if(q>window.saleCart[i].Stock){toast('Insufficient stock');return}window.saleCart[i].Qty=q;renderCart()}
+function removeCart(i){window.saleCart.splice(i,1);renderCart()}
+async function createSaleFromCart(){
+if(!window.saleCart.length){toast('Cart is empty');return}
+try{const r=await call('createSale',{items:window.saleCart.map(x=>({Product_ID:x.Product_ID,Qty:x.Qty,Unit_Price:x.Unit_Price})),Customer_ID:$('saleCustomer').value,paid:Number($('salePaid').value||0),Payment_Method:$('saleMethod').value});toast('Sale completed: '+r.invoice);printInvoice(r.saleId);window.saleCart=[]}catch(e){toast(e.message||e)}
+}
+async function loadSales(){
+try{const r=await call('sales',{search:$('search')?.value||''});$('table').innerHTML=table(r.rows,['Sale_ID','Invoice_No','Customer_ID','Grand_Total','Paid','Due','Payment_Method','Sale_Date','Status'],x=>'<button class="btn secondary" onclick="printInvoice(\''+x.Sale_ID+'\')">Print</button>')}catch(e){toast(e.message||e)}
+}
+async function printInvoice(saleId){
+try{
+const r=await call('invoice',{Sale_ID:saleId}), w=window.open('','_blank');
+if(!w){toast('Allow pop-ups to print invoice');return}
+w.document.write('<html><head><title>'+r.sale.Invoice_No+'</title><style>body{font-family:Arial,sans-serif;padding:25px;max-width:760px;margin:auto}h1{text-align:center}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left}.right{text-align:right}</style></head><body><h1>Business POS</h1><p style="text-align:center">Invoice: '+r.sale.Invoice_No+'</p><p>Date: '+r.sale.Sale_Date+'<br>Customer: '+(r.customer?.Name||'Walk-in Customer')+'</p><table><tr><th>Product</th><th>Qty</th><th>Price</th><th>Total</th></tr>'+r.items.map(x=>'<tr><td>'+x.Product_Name+'</td><td>'+x.Qty+'</td><td>'+money(x.Unit_Price)+'</td><td>'+money(x.Line_Total)+'</td></tr>').join('')+'</table><h3 class="right">Grand Total: '+money(r.sale.Grand_Total)+'</h3><p class="right">Paid: '+money(r.sale.Paid)+' | Due: '+money(r.sale.Due)+'</p><script>window.onload=()=>window.print()<\\/script></body></html>');
+w.document.close();
+}catch(e){toast(e.message||e)}
+}
 async function purchases(){main('<div class="page-head"><h2>Purchases</h2></div><div class="card"><p class="muted">Purchase entry uses the same product inventory and updates stock automatically.</p><div id="purchaseItems"></div><button class="btn secondary" onclick="addPurchaseItem()">+ Add Item</button><div class="form-grid" style="margin-top:12px">'+field('purchaseSupplier','Supplier ID')+field('purchasePaid','Paid Amount','0','number')+field('purchaseMethod','Payment Method','Cash')+'</div><div class="actions"><button class="btn" onclick="createPurchase()">Complete Purchase</button></div></div>');addPurchaseItem()}
 function addPurchaseItem(){let i=document.createElement('div');i.className='form-grid';i.innerHTML='<div class="field"><label>Product ID</label><input class="purPid"></div><div class="field"><label>Quantity</label><input class="purQty" type="number" value="1"></div><div class="field"><label>Unit Cost</label><input class="purCost" type="number" value="0"></div>'; $('purchaseItems').appendChild(i)}
 async function createPurchase(){const ps=[...document.querySelectorAll('.purPid')],items=ps.map((x,i)=>({Product_ID:x.value,Qty:Number(document.querySelectorAll('.purQty')[i].value),Unit_Cost:Number(document.querySelectorAll('.purCost')[i].value)})).filter(x=>x.Product_ID);try{const r=await call('createPurchase',{items,Supplier_ID:$('purchaseSupplier').value,paid:Number($('purchasePaid').value||0),Payment_Method:$('purchaseMethod').value});toast('Purchase completed: '+r.invoice);page('purchases')}catch(e){toast(e.message||e)}}
