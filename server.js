@@ -5,6 +5,7 @@ const path = require('path');
 const PORT = Number(process.env.PORT || 10000);
 const GAS_WEB_APP_URL = String(process.env.GAS_WEB_APP_URL || '').trim();
 const indexPath = path.join(__dirname, 'Index.html');
+const adminPath = path.join(__dirname, 'admin.html');
 
 function send(res, status, body, type = 'text/plain; charset=utf-8') {
   res.writeHead(status, {
@@ -20,6 +21,13 @@ function getIndex() {
     throw new Error('Index.html is missing from the deployment.');
   }
   return fs.readFileSync(indexPath, 'utf8');
+}
+
+function getAdmin() {
+  if (!fs.existsSync(adminPath)) {
+    throw new Error('admin.html is missing from the deployment.');
+  }
+  return fs.readFileSync(adminPath, 'utf8');
 }
 
 async function proxyToGas(body) {
@@ -110,6 +118,11 @@ const server = http.createServer(async (req, res) => {
       );
     }
 
+    // Admin frontend.
+    if ((req.method === 'GET' || req.method === 'HEAD') && (pathname === '/admin' || pathname === '/admin.html')) {
+      return send(res, 200, getAdmin(), 'text/html; charset=utf-8');
+    }
+
     // Main frontend. URL query strings such as /?page=dashboard are supported.
     if ((req.method === 'GET' || req.method === 'HEAD') && (pathname === '/' || pathname === '/index.html')) {
       return send(res, 200, getIndex(), 'text/html; charset=utf-8');
@@ -135,5 +148,6 @@ server.on('clientError', (err, socket) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log('POS System listening on ' + PORT);
   console.log('Index file: ' + indexPath + ' | exists=' + fs.existsSync(indexPath));
+  console.log('Admin file: ' + adminPath + ' | exists=' + fs.existsSync(adminPath));
   console.log('GAS backend configured: ' + Boolean(GAS_WEB_APP_URL));
 });
