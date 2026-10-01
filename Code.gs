@@ -68,6 +68,18 @@ function doGet() {
     .addMetaTag('viewport','width=device-width, initial-scale=1');
 }
 
+/** HTTP JSON API for external frontends such as Render. */
+function doPost(e) {
+  try {
+    const body = e && e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
+    const result = api(body.token || '', String(body.action || ''), body.payload || {});
+    return ContentService.createTextOutput(JSON.stringify({success:true,data:result})).setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    logSystem_('ERROR','HTTP_API',error && error.stack ? error.stack : String(error));
+    return ContentService.createTextOutput(JSON.stringify({success:false,error:String(error && error.message || error)})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
 function include(name) {
   return HtmlService.createHtmlOutputFromFile(name).getContent();
 }
@@ -87,7 +99,8 @@ function setupDatabase(adminUsername, adminPassword, adminEmail) {
   let id = props.getProperty('DATABASE_SHEET_ID');
   let ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.create(CONFIG.APP_NAME + ' Database');
   props.setProperty('DATABASE_SHEET_ID', ss.getId());
-  props.setProperty('APP_VERSION', '1.0.0');
+  props.setProperty('APP_VERSION', '2.0.0');
+  if(!props.getProperty('CODE_SOURCE_URL')) props.setProperty('CODE_SOURCE_URL','https://raw.githubusercontent.com/bdmanegmanet/POS-SYSTEM-/main/Code.gs');
 
   Object.keys(CONFIG.SHEETS).forEach(name => ensureSheet_(ss, name, CONFIG.SHEETS[name]));
   seedSettings_(ss);
@@ -208,6 +221,25 @@ function changePassword(token, oldPassword, newPassword) {
 function api(token, action, payload) {
   const p=payload||{};
   switch(action) {
+    case 'login': return login(p.username,p.password);
+    case 'logout': return logout(token);
+    case 'reports': return getReports(token,p);
+    case 'accounting': return getAccountingSummary(token,p);
+    case 'accounts': return getAccounts(token,p);
+    case 'saveAccount': return saveAccount(token,p);
+    case 'categories': return getCategories(token,p);
+    case 'saveCategory': return saveCategory(token,p);
+    case 'brands': return getBrands(token,p);
+    case 'saveBrand': return saveBrand(token,p);
+    case 'variants': return getVariants(token,p);
+    case 'saveVariant': return saveVariant(token,p);
+    case 'backup': return createBackup(token);
+    case 'restore': return restoreBackup(token,p);
+    case 'codeDraft': return getCodeDraft(token);
+    case 'saveCodeDraft': return saveCodeDraft(token,p);
+    case 'syncStatus': return syncStatus(token);
+    case 'notifications': return getNotifications(token);
+
     case 'dashboard': return getDashboard(token);
     case 'products': return getProducts(token,p);
     case 'saveProduct': return saveProduct(token,p);
@@ -273,7 +305,8 @@ function saveProduct(token,p) {
   data.Discount_Price=num_(p.Discount_Price);
   data.VAT=num_(p.VAT);
   data.Minimum_Stock=num_(p.Minimum_Stock);
-  data.Current_Stock=num_(p.Current_Stock);
+  const existing=rows.find(r=>String(r.Product_ID)===String(p.Product_ID));
+  data.Current_Stock=(p.Current_Stock!==undefined && String(p.Current_Stock)!=='') ? num_(p.Current_Stock) : num_(existing ? existing.Current_Stock : 0);
   data.Status=p.Status||'Active';
   data.Updated_Date=now_();
   data.Created_Date=p.Created_Date||now_();
@@ -617,10 +650,105 @@ function saveSettings(token,p) {
   const s=requireSession_(token,'manage_settings'); Object.keys(p||{}).forEach(k=>upsert_('Settings',{Key:k,Value:String(p[k]),Updated_At:now_()},'Key'));
   audit_(s.username,'UPDATE','SETTINGS','', '',JSON.stringify(p),''); return getSettings(token);
 }
-function syncData(token){const s=requireSession_(token,'view'); return {success:true,status:'Connected',lastSync:now_(),pendingChanges:0,failed:0,user:s.username};}
-function pushData(token){const s=requireSession_(token,'manage_database'); return {success:true,status:'Pushed',lastPush:now_(),user:s.username};}
+function syncData(token){const s=requireSession_(token,'view'); const t=now_(); PropertiesService.getScriptProperties().setProperty('LAST_SYNC',t.toISOString()); PropertiesService.getScriptProperties().setProperty('FAILED_SYNC','0'); return {success:true,status:'Connected',lastSync:t,pendingChanges:Number(PropertiesService.getScriptProperties().getProperty('PENDING_CHANGES')||0),failed:0,user:s.username};}
+function pushData(token){const s=requireSession_(token,'manage_database'); const t=now_(); PropertiesService.getScriptProperties().setProperty('LAST_PUSH',t.toISOString()); PropertiesService.getScriptProperties().setProperty('PENDING_CHANGES','0'); PropertiesService.getScriptProperties().setProperty('FAILED_SYNC','0'); return {success:true,status:'Pushed',lastPush:t,pendingChanges:0,user:s.username};}
 function systemHealth(token){requireSession_(token,'view');const ss=getDb_();return {database:'OK',spreadsheet:ss.getName(),spreadsheetId:ss.getId(),lastSync:now_(),storage:'Google Drive available',appVersion:PropertiesService.getScriptProperties().getProperty('APP_VERSION')||'1.0.0'};}
 function getCode(token){requireSession_(token,'manage_database');return ScriptApp.getService().getUrl() ? getFullCode_() : getFullCode_();}
+
+/* =========================
+   ADVANCED REPORTS / ACCOUNTING / MASTER DATA
+========================= */
+function dateRange_(p){
+  const tz=Session.getScriptTimeZone()||'Asia/Dhaka', fmt=d=>Utilities.formatDate(d,tz,'yyyy-MM-dd'), now=new Date();
+  let from=p&&p.from?new Date(p.from):new Date(now.getFullYear(),now.getMonth(),now.getDate()), to=p&&p.to?new Date(p.to):now;
+  if(p&&p.period){
+    const period=String(p.period);
+    if(period==='today'){from=new Date(now.getFullYear(),now.getMonth(),now.getDate());to=now;}
+    if(period==='yesterday'){from=new Date(now.getFullYear(),now.getMonth(),now.getDate()-1);to=new Date(now.getFullYear(),now.getMonth(),now.getDate());}
+    if(period==='thisWeek'){const day=now.getDay();from=new Date(now.getFullYear(),now.getMonth(),now.getDate()-(day||7)+1);to=now;}
+    if(period==='thisMonth'){from=new Date(now.getFullYear(),now.getMonth(),1);to=now;}
+    if(period==='lastMonth'){from=new Date(now.getFullYear(),now.getMonth()-1,1);to=new Date(now.getFullYear(),now.getMonth(),1);}
+    if(period==='thisYear'){from=new Date(now.getFullYear(),0,1);to=now;}
+  }
+  return {from:fmt(from),to:fmt(to)};
+}
+function inRange_(value,range){
+  const d=new Date(value); if(isNaN(d)) return false;
+  const s=Utilities.formatDate(d,Session.getScriptTimeZone()||'Asia/Dhaka','yyyy-MM-dd');
+  return s>=range.from && s<=range.to;
+}
+function getReports(token,p){
+  requireSession_(token,'view'); const range=dateRange_(p||{});
+  const sales=getRows_('Sales').filter(r=>r.Status==='Completed'&&inRange_(r.Sale_Date,range));
+  const purchases=getRows_('Purchases').filter(r=>r.Status==='Completed'&&inRange_(r.Purchase_Date,range));
+  const expenses=getRows_('Expenses').filter(r=>inRange_(r.Expense_Date,range));
+  const products=getRows_('Products').filter(r=>r.Status!=='Deleted'), productCost={};
+  products.forEach(x=>productCost[x.Product_ID]=num_(x.Purchase_Price));
+  const saleIds={}; sales.forEach(s=>saleIds[s.Sale_ID]=true);
+  const saleItems=getRows_('Sale_Items').filter(r=>saleIds[r.Sale_ID]);
+  const revenue=sales.reduce((a,r)=>a+num_(r.Grand_Total),0), purchaseTotal=purchases.reduce((a,r)=>a+num_(r.Grand_Total),0), expenseTotal=expenses.reduce((a,r)=>a+num_(r.Amount),0);
+  const cogs=saleItems.reduce((a,r)=>a+num_(r.Qty)*num_(productCost[r.Product_ID]),0), gross=revenue-cogs, net=gross-expenseTotal, top={};
+  saleItems.forEach(r=>top[r.Product_Name]=(top[r.Product_Name]||0)+num_(r.Qty)*num_(r.Unit_Price));
+  const topProducts=Object.keys(top).map(k=>({Product_Name:k,Sales:top[k]})).sort((a,b)=>b.Sales-a.Sales).slice(0,10);
+  return {range,revenue,purchaseTotal,expenseTotal,cogs,grossProfit:gross,netProfit:net,salesCount:sales.length,purchaseCount:purchases.length,topProducts,sales:sales.map(normalize_),purchases:purchases.map(normalize_),expenses:expenses.map(normalize_)};
+}
+function getAccounts(token,p){requireSession_(token,'view');return {rows:getRows_('Accounts').map(normalize_)};}
+function saveAccount(token,p){
+  const s=requireSession_(token,p.Account_ID?'edit':'create'); required_(p,['Account_Name']);
+  const d=Object.assign({},p,{Account_ID:p.Account_ID||id_('ACC'),Account_Type:p.Account_Type||'Cash',Balance:num_(p.Balance),Status:p.Status||'Active',Created_At:p.Created_At||now_(),Updated_At:now_()});
+  upsert_('Accounts',d,'Account_ID'); audit_(s.username,p.Account_ID?'UPDATE':'CREATE','ACCOUNTS',d.Account_ID,'',JSON.stringify(d),''); return d;
+}
+function getAccountingSummary(token,p){
+  requireSession_(token,'view'); const r=getReports(token,p||{});
+  const accounts=getRows_('Accounts').map(normalize_), customerDue=getRows_('Customers').reduce((a,x)=>a+num_(x.Current_Due),0), supplierDue=getRows_('Suppliers').reduce((a,x)=>a+num_(x.Current_Due),0);
+  return {range:r.range,revenue:r.revenue,cogs:r.cogs,grossProfit:r.grossProfit,expenses:r.expenseTotal,netProfit:r.netProfit,customerDue,supplierDue,accounts};
+}
+function getCategories(token,p){requireSession_(token,'view');return {rows:filterRows_('Categories',p||{})};}
+function saveCategory(token,p){
+  const s=requireSession_(token,p.Category_ID?'edit':'create'); required_(p,['Category_Name']);
+  const d=Object.assign({},p,{Category_ID:p.Category_ID||id_('CAT'),Status:p.Status||'Active',Created_At:p.Created_At||now_(),Updated_At:now_()});
+  upsert_('Categories',d,'Category_ID'); audit_(s.username,p.Category_ID?'UPDATE':'CREATE','CATEGORIES',d.Category_ID,'',JSON.stringify(d),''); return d;
+}
+function getBrands(token,p){requireSession_(token,'view');return {rows:filterRows_('Brands',p||{})};}
+function saveBrand(token,p){
+  const s=requireSession_(token,p.Brand_ID?'edit':'create'); required_(p,['Brand_Name']);
+  const d=Object.assign({},p,{Brand_ID:p.Brand_ID||id_('BRD'),Status:p.Status||'Active',Created_At:p.Created_At||now_()});
+  upsert_('Brands',d,'Brand_ID'); audit_(s.username,p.Brand_ID?'UPDATE':'CREATE','BRANDS',d.Brand_ID,'',JSON.stringify(d),''); return d;
+}
+function getVariants(token,p){requireSession_(token,'view');let rows=getRows_('Product_Variants');if(p&&p.Product_ID)rows=rows.filter(r=>String(r.Product_ID)===String(p.Product_ID));return {rows:rows.map(normalize_)};}
+function saveVariant(token,p){
+  const s=requireSession_(token,p.Variant_ID?'edit':'create'); required_(p,['Product_ID','Variant_Name']);
+  const d=Object.assign({},p,{Variant_ID:p.Variant_ID||id_('VAR'),Stock:num_(p.Stock),Purchase_Price:num_(p.Purchase_Price),Selling_Price:num_(p.Selling_Price),Status:p.Status||'Active',Created_At:p.Created_At||now_(),Updated_At:now_()});
+  upsert_('Product_Variants',d,'Variant_ID'); audit_(s.username,p.Variant_ID?'UPDATE':'CREATE','VARIANTS',d.Variant_ID,'',JSON.stringify(d),''); return d;
+}
+function createBackup(token){
+  const s=requireSession_(token,'manage_database'), data={createdAt:now_().toISOString(),sheets:{}};
+  Object.keys(CONFIG.SHEETS).forEach(name=>data.sheets[name]=getRows_(name));
+  const file=DriveApp.createFile('POS_Backup_'+Utilities.formatDate(new Date(),Session.getScriptTimeZone()||'Asia/Dhaka','yyyy_MM_dd_HH_mm')+'.json',JSON.stringify(data,null,2),MimeType.PLAIN_TEXT);
+  appendRow_('Backups',{Backup_ID:id_('BKP'),Type:'FULL',File_ID:file.getId(),File_URL:file.getUrl(),Created_By:s.username,Created_At:now_()});
+  audit_(s.username,'CREATE','BACKUP',file.getId(),'','',''); return {success:true,fileId:file.getId(),url:file.getUrl(),name:file.getName()};
+}
+function restoreBackup(token,p){
+  const s=requireSession_(token,'manage_database'); required_(p,['File_ID']);
+  const file=DriveApp.getFileById(p.File_ID), data=JSON.parse(file.getBlob().getDataAsString());
+  Object.keys(data.sheets||{}).forEach(name=>{
+    if(!CONFIG.SHEETS[name]) return; const sh=getDb_().getSheetByName(name), rows=data.sheets[name]||[]; if(!rows.length) return;
+    const headers=CONFIG.SHEETS[name], values=rows.map(o=>headers.map(h=>o[h]!==undefined?o[h]:''));
+    if(sh.getLastRow()>1) sh.getRange(2,1,sh.getLastRow()-1,sh.getLastColumn()).clearContent();
+    sh.getRange(2,1,values.length,headers.length).setValues(values);
+  });
+  audit_(s.username,'RESTORE','BACKUP',p.File_ID,'','',''); return {success:true,message:'Backup restored without changing sheet structure.'};
+}
+function getCodeDraft(token){requireSession_(token,'manage_database');return {draft:PropertiesService.getScriptProperties().getProperty('CODE_DRAFT')||'',sourceUrl:PropertiesService.getScriptProperties().getProperty('CODE_SOURCE_URL')||''};}
+function saveCodeDraft(token,p){
+  const s=requireSession_(token,'manage_database'), draft=String(p.code||''); if(draft.length>200000) throw new Error('Code draft is too large.');
+  PropertiesService.getScriptProperties().setProperty('CODE_DRAFT',draft); audit_(s.username,'SAVE_DRAFT','DEVELOPER','CODE.gs','','Draft saved',''); return {success:true,length:draft.length};
+}
+function syncStatus(token){
+  requireSession_(token,'view'); const settings=getSettings(token), props=PropertiesService.getScriptProperties();
+  return {autoSync:String(settings.AUTO_SYNC||'true')==='true',interval:Number(settings.SYNC_INTERVAL||30),lastSync:props.getProperty('LAST_SYNC')||'',lastPush:props.getProperty('LAST_PUSH')||'',pendingChanges:Number(props.getProperty('PENDING_CHANGES')||0),failed:Number(props.getProperty('FAILED_SYNC')||0),status:'Connected'};
+}
+function getNotifications(token){requireSession_(token,'view');return {rows:getRows_('Notifications').filter(r=>String(r.Status||'New')!=='Read').map(normalize_).slice(-50)};
 
 /* =========================
    UTILITIES
@@ -632,11 +760,12 @@ function getFullCode_(){
 }
 function getRows_(sheet){return getSheetRows_(getDb_().getSheetByName(sheet));}
 function getSheetRows_(sh){if(!sh||sh.getLastRow()<2)return [];const h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0];return sh.getRange(2,1,sh.getLastRow()-1,sh.getLastColumn()).getValues().map(row=>{const o={};h.forEach((k,i)=>o[k]=row[i]);return o;});}
-function appendRow_(sheet,obj){const sh=getDb_().getSheetByName(sheet),h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0];sh.appendRow(h.map(k=>obj[k]!==undefined?obj[k]:''));}
+function appendRow_(sheet,obj){const sh=getDb_().getSheetByName(sheet),h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0];sh.appendRow(h.map(k=>obj[k]!==undefined?obj[k]:'')); if(sheet!=='System_Logs'&&sheet!=='Audit_Logs'&&sheet!=='Backups') PropertiesService.getScriptProperties().setProperty('PENDING_CHANGES',String(Number(PropertiesService.getScriptProperties().getProperty('PENDING_CHANGES')||0)+1));}
 function upsert_(sheet,obj,key){
   const sh=getDb_().getSheetByName(sheet),h=sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0], rows=getSheetRows_(sh), idx=rows.findIndex(r=>String(r[key])===String(obj[key]));
   const values=h.map(k=>obj[k]!==undefined?obj[k]:(idx>=0?rows[idx][k]:''));
   if(idx>=0) sh.getRange(idx+2,1,1,h.length).setValues([values]); else sh.appendRow(values);
+  if(sheet!=='System_Logs'&&sheet!=='Audit_Logs'&&sheet!=='Backups') PropertiesService.getScriptProperties().setProperty('PENDING_CHANGES',String(Number(PropertiesService.getScriptProperties().getProperty('PENDING_CHANGES')||0)+1));
 }
 function filterRows_(sheet,p){let rows=getRows_(sheet);if(p&&p.search){const q=String(p.search).toLowerCase();rows=rows.filter(r=>Object.values(r).some(v=>String(v).toLowerCase().includes(q)));}return rows.map(normalize_);}
 function normalize_(o){const r={};Object.keys(o).forEach(k=>r[k]=o[k] instanceof Date?o[k].toISOString():o[k]);return r;}
