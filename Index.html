@@ -105,7 +105,7 @@ function field(id,label,value='',type='text'){return '<div class="field"><label>
 function table(rows,cols,actions){if(!rows.length)return '<p class="muted">No records found.</p>';return '<table class="table"><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+(actions?'<th>Action</th>':'')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+String(r[c]??'').slice(0,80)+'</td>').join('')+(actions?'<td>'+actions(r)+'</td>':'')+'</tr>').join('')+'</tbody></table>'}
 function modal(x){$('modalBox').innerHTML=x;$('modal').classList.remove('hidden')}
 function closeModal(){$('modal').classList.add('hidden')}
-if(TOKEN){google.script.run.withSuccessHandler(r=>{USER=r;showApp()}).withFailureHandler(()=>{localStorage.removeItem('pos_token');TOKEN=''}) .session(TOKEN)}
+if(TOKEN){google.script.run.withSuccessHandler(r=>{USER=r;showApp()}).withFailureHandler(()=>{localStorage.removeItem('pos_token');TOKEN=''}) .getSession(TOKEN)}
 </script>
 </body>
 </html>
