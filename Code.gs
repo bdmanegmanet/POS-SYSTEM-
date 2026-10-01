@@ -228,6 +228,10 @@ function api(token, action, payload) {
     case 'saveSettings': return saveSettings(token,p);
     case 'code': return getCode(token);
     case 'health': return systemHealth(token);
+    case 'stockMovements': return getStockMovements(token,p);
+    case 'stockAdjustment': return stockAdjustment(token,p);
+    case 'lowStock': return getLowStock(token);
+    case 'purchaseReturn': return purchaseReturn(token,p);
     case 'saleItems': return getSaleItems(token,p.Sale_ID);
     case 'returnSale': return returnSale(token,p);
     case 'customerPayment': return createCustomerPayment(token,p);
@@ -375,6 +379,55 @@ function createPurchase(token,p) {
   } finally { lock.releaseLock(); }
 }
 function getPurchases(token,p){requireSession_(token,'view'); return {rows:filterRows_('Purchases',p)};}
+function getStockMovements(token,p){
+  requireSession_(token,'view');
+  let rows=filterRows_('Stock_Movements',p||{}).sort((a,b)=>new Date(b.Created_At)-new Date(a.Created_At));
+  if(p&&p.Product_ID) rows=rows.filter(r=>String(r.Product_ID)===String(p.Product_ID));
+  return {rows:rows.slice(0,500)};
+}
+function stockAdjustment(token,p){
+  const s=requireSession_(token,'edit');
+  required_(p,['Product_ID','Quantity','Type']);
+  const delta=num_(p.Quantity);
+  if(!delta) throw new Error('Quantity cannot be zero.');
+  const product=getRows_('Products').find(r=>String(r.Product_ID)===String(p.Product_ID));
+  if(!product) throw new Error('Product not found.');
+  const type=String(p.Type).toUpperCase();
+  if(type==='REMOVE') updateStock_(p.Product_ID,-Math.abs(delta),'ADJUSTMENT',p.Reference_ID||'',s.username);
+  else updateStock_(p.Product_ID,Math.abs(delta),'ADJUSTMENT',p.Reference_ID||'',s.username);
+  audit_(s.username,'ADJUST','INVENTORY',p.Product_ID,'',JSON.stringify(p),'');
+  return {success:true,productId:p.Product_ID,currentStock:getRows_('Products').find(r=>String(r.Product_ID)===String(p.Product_ID)).Current_Stock};
+}
+function getLowStock(token){
+  requireSession_(token,'view');
+  const rows=getRows_('Products').filter(r=>r.Status!=='Deleted' && num_(r.Current_Stock)<=num_(r.Minimum_Stock||5));
+  return {rows:rows.map(normalize_)};
+}
+function purchaseReturn(token,p){
+  const s=requireSession_(token,'create');
+  required_(p,['Purchase_ID']);
+  if(!Array.isArray(p.items)||!p.items.length) throw new Error('Return items are required.');
+  const purchase=getRows_('Purchases').find(r=>String(r.Purchase_ID)===String(p.Purchase_ID));
+  if(!purchase) throw new Error('Purchase not found.');
+  const original=getRows_('Purchase_Items').filter(r=>String(r.Purchase_ID)===String(p.Purchase_ID));
+  let amount=0;
+  p.items.forEach(i=>{
+    const item=original.find(x=>String(x.Product_ID)===String(i.Product_ID));
+    const qty=num_(i.Qty);
+    if(!item||qty<=0||qty>num_(item.Qty)) throw new Error('Invalid return quantity for '+i.Product_ID);
+    amount+=qty*num_(item.Unit_Cost);
+  });
+  const rid=id_('PRET');
+  appendRow_('Purchase_Returns',{Return_ID:rid,Purchase_ID:p.Purchase_ID,Supplier_ID:purchase.Supplier_ID||'',Amount:amount,Reason:p.Reason||'',Return_Date:now_(),Created_By:s.username,Created_At:now_()});
+  p.items.forEach(i=>{
+    appendRow_('Purchase_Return_Items',{Return_Item_ID:id_('PRIT'),Return_ID:rid,Product_ID:i.Product_ID,Qty:num_(i.Qty),Amount:num_(i.Qty)*num_(i.Unit_Cost)});
+    updateStock_(i.Product_ID,-num_(i.Qty),'PURCHASE_RETURN',rid,s.username);
+  });
+  if(purchase.Supplier_ID) updatePartyDue_('Suppliers','Supplier_ID',purchase.Supplier_ID,-amount,s.username);
+  audit_(s.username,'CREATE','PURCHASE_RETURN',rid,'',JSON.stringify(p),'');
+  return {success:true,returnId:rid,amount};
+}
+
 
 /* =========================
    EXPENSES
