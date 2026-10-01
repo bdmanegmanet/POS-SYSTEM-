@@ -1,0 +1,7 @@
+{
+  "name":"business-pos-system",
+  "version":"2.0.0",
+  "private":true,
+  "description":"Render Web Service frontend/proxy for Google Apps Script Business POS System",
+  "scripts":{"start":"node server.js"}
+}
