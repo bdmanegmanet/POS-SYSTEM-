@@ -81,7 +81,34 @@ async function products(){main('<div class="page-head"><h2>Products</h2><button 
 async function loadProducts(){try{const r=await call('products',{search:$('search')?.value||''});cache.products=r.rows;$('table').innerHTML=table(r.rows,['Product_ID','Product_Name','SKU','Barcode','Category','Selling_Price','Current_Stock','Status'],r=>'<button class="btn secondary" onclick=productModal('+JSON.stringify(encodeURIComponent(JSON.stringify(r)))+')>Edit</button>')}catch(e){toast(e.message||e)}}
 function productModal(encoded){let p={};if(encoded)try{p=JSON.parse(decodeURIComponent(encoded))}catch(e){};modal('<div class="modal-head"><h3>'+(p.Product_ID?'Edit':'Add')+' Product</h3><button class="btn secondary" onclick="closeModal()">✕</button></div><div class="form-grid">'+field('Product_Name','Product Name',p.Product_Name)+field('Barcode','Barcode',p.Barcode)+field('SKU','SKU',p.SKU)+field('Category','Category',p.Category)+field('Brand','Brand',p.Brand)+field('Purchase_Price','Purchase Price',p.Purchase_Price,'number')+field('Selling_Price','Selling Price',p.Selling_Price,'number')+field('Discount_Price','Discount Price',p.Discount_Price,'number')+field('Current_Stock','Opening/Current Stock',p.Current_Stock,'number')+field('Minimum_Stock','Minimum Stock',p.Minimum_Stock||5,'number')+field('Unit','Unit',p.Unit||'pcs')+'</div><div class="actions"><button class="btn secondary" onclick="closeModal()">Cancel</button><button class="btn" onclick=saveProduct("'+(p.Product_ID||'')+'")>Save</button></div>')}
 async function saveProduct(id){const p={Product_ID:id};['Product_Name','Barcode','SKU','Category','Brand','Purchase_Price','Selling_Price','Discount_Price','Current_Stock','Minimum_Stock','Unit'].forEach(k=>p[k]=$(k)?.value);try{await call('saveProduct',p);closeModal();toast('Product saved');loadProducts()}catch(e){toast(e.message||e)}}
-async function inventory(){main('<div class="page-head"><h2>Inventory</h2></div><div class="card"><div id="table">Loading...</div></div>');try{const r=await call('products',{});$('table').innerHTML=table(r.rows,['Product_ID','Product_Name','SKU','Current_Stock','Minimum_Stock','Purchase_Price','Selling_Price','Status'])}catch(e){toast(e.message||e)}}
+async function inventory(){
+main('<div class="page-head"><h2>Inventory</h2><div class="toolbar"><button class="btn" onclick="stockAdjustModal()">± Stock Adjustment</button><button class="btn secondary" onclick="loadInventory()">↻ Refresh</button></div></div><div class="grid"><div class="card stat"><div class="label">Total Products</div><div id="invProducts" class="value">—</div></div><div class="card stat"><div class="label">Low Stock</div><div id="invLow" class="value">—</div></div><div class="card stat"><div class="label">Out of Stock</div><div id="invOut" class="value">—</div></div><div class="card stat"><div class="label">Stock Value</div><div id="invValue" class="value">—</div></div></div><div class="two"><div class="card"><h3>Stock List</h3><div class="toolbar"><input id="invSearch" placeholder="Search product / SKU / barcode" oninput="loadInventory()"></div><div id="invTable">Loading...</div></div><div class="card"><h3>Recent Stock Movements</h3><div id="movementTable">Loading...</div></div></div>');
+loadInventory();loadMovements();
+}
+async function loadInventory(){
+try{
+const r=await call('products',{search:$('invSearch')?.value||''}), rows=r.rows||[];
+$('invProducts').textContent=rows.length;
+$('invLow').textContent=rows.filter(x=>Number(x.Current_Stock||0)<=Number(x.Minimum_Stock||5)&&Number(x.Current_Stock||0)>0).length;
+$('invOut').textContent=rows.filter(x=>Number(x.Current_Stock||0)<=0).length;
+$('invValue').textContent=money(rows.reduce((a,x)=>a+Number(x.Current_Stock||0)*Number(x.Purchase_Price||0),0));
+$('invTable').innerHTML=table(rows,['Product_ID','Product_Name','SKU','Barcode','Current_Stock','Minimum_Stock','Purchase_Price','Selling_Price'],x=>'<button class="btn secondary" onclick="stockAdjustModal(\\''+x.Product_ID+'\\')">Adjust</button>');
+}catch(e){toast(e.message||e)}
+}
+async function loadMovements(){
+try{const r=await call('stockMovements',{});$('movementTable').innerHTML=table(r.rows,['Movement_ID','Product_ID','Type','Quantity','Before_Qty','After_Qty','Created_By','Created_At'])}catch(e){toast(e.message||e)}
+}
+function stockAdjustModal(productId){
+modal('<div class="modal-head"><h3>Stock Adjustment</h3><button class="btn secondary" onclick="closeModal()">✕</button></div><div class="form-grid">'+field('adjustProduct','Product ID',productId||'')+field('adjustQty','Quantity','1','number')+field('adjustType','Action','ADD')+field('adjustRef','Reference / Note')+'</div><p class="muted">Action: ADD অথবা REMOVE</p><div class="actions"><button class="btn" onclick="saveStockAdjustment()">Save Adjustment</button></div>');
+}
+async function saveStockAdjustment(){
+try{
+const type=String($('adjustType').value||'ADD').toUpperCase();
+if(!['ADD','REMOVE'].includes(type))throw new Error('Action must be ADD or REMOVE.');
+const r=await call('stockAdjustment',{Product_ID:$('adjustProduct').value,Quantity:Number($('adjustQty').value),Type:type,Reference_ID:$('adjustRef').value});
+closeModal();toast('Stock updated: '+r.currentStock);loadInventory();loadMovements();
+}catch(e){toast(e.message||e)}
+}
 async function sales(history){
 if(history){
 main('<div class="page-head"><h2>Sales History</h2><button class="btn secondary" onclick="sales(true)">↻ Refresh</button></div><div class="card"><div class="toolbar"><input id="search" placeholder="Invoice / customer / ID search..." oninput="loadSales()"></div><div id="table">Loading...</div></div>');
