@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: pos-system-web
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: GAS_WEB_APP_URL
+        sync: false
