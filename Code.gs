@@ -749,7 +749,7 @@ function syncStatus(token){
   requireSession_(token,'view'); const settings=getSettings(token), props=PropertiesService.getScriptProperties();
   return {autoSync:String(settings.AUTO_SYNC||'true')==='true',interval:Number(settings.SYNC_INTERVAL||30),lastSync:props.getProperty('LAST_SYNC')||'',lastPush:props.getProperty('LAST_PUSH')||'',pendingChanges:Number(props.getProperty('PENDING_CHANGES')||0),failed:Number(props.getProperty('FAILED_SYNC')||0),status:'Connected'};
 }
-function getNotifications(token){requireSession_(token,'view');return {rows:getRows_('Notifications').filter(r=>String(r.Status||'New')!=='Read').map(normalize_).slice(-50)};
+function getNotifications(token){requireSession_(token,'view');return {rows:getRows_('Notifications').filter(r=>String(r.Status||'New')!=='Read').map(normalize_).slice(-50)};}
 
 /* =========================
    UTILITIES
