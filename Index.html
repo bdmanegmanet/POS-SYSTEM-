@@ -52,8 +52,8 @@
       <div class="nav-title">Products</div><button class="nav" data-page="products" onclick="page('products')">📦 Products</button><button class="nav" data-page="inventory" onclick="page('inventory')">📋 Inventory</button>
       <div class="nav-title">Purchase</div><button class="nav" data-page="purchases" onclick="page('purchases')">🚚 Purchases</button>
       <div class="nav-title">Parties</div><button class="nav" data-page="customers" onclick="page('customers')">👥 Customers</button><button class="nav" data-page="suppliers" onclick="page('suppliers')">🏭 Suppliers</button>
-      <div class="nav-title">Finance</div><button class="nav" data-page="expenses" onclick="page('expenses')">💳 Expenses</button><button class="nav" data-page="reports" onclick="page('reports')">📈 Reports</button>
-      <div class="nav-title">System</div><button class="nav" data-page="settings" onclick="page('settings')">⚙️ Settings</button><button class="nav" data-page="health" onclick="page('health')">🩺 System Health</button>
+      <div class="nav-title">Finance</div><button class="nav" data-page="expenses" onclick="page('expenses')">💳 Expenses</button><button class="nav" data-page="reports" onclick="page('reports')">📈 Reports</button><button class="nav" data-page="accounting" onclick="page('accounting')">📚 Accounting</button>
+      <div class="nav-title">System</div><button class="nav" data-page="syncCenter" onclick="page('syncCenter')">🔄 Sync Center</button><button class="nav" data-page="developer" onclick="page('developer')">🧑‍💻 Developer</button><button class="nav" data-page="settings" onclick="page('settings')">⚙️ Settings</button><button class="nav" data-page="health" onclick="page('health')">🩺 System Health</button>
     </aside>
     <main id="main"></main>
   </div>
@@ -64,17 +64,22 @@
 <script>
 let TOKEN=localStorage.getItem('pos_token')||'', USER=null, currentPage='dashboard', cache={};
 const $=id=>document.getElementById(id);
-function call(action,payload={}){return new Promise((resolve,reject)=>google.script.run.withSuccessHandler(resolve).withFailureHandler(e=>reject(e)).api(TOKEN,action,payload))}
+function call(action,payload={}){
+  const hasGAS=typeof google!=='undefined'&&google.script&&google.script.run;
+  if(hasGAS) return new Promise((resolve,reject)=>google.script.run.withSuccessHandler(resolve).withFailureHandler(e=>reject(e)).api(TOKEN,action,payload));
+  return fetch('/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,action,payload})})
+    .then(r=>r.json()).then(r=>{if(!r.success)throw new Error(r.error||'API request failed');return r.data;});
+}
 function toast(msg){$('toast').textContent=msg;$('toast').classList.remove('hidden');setTimeout(()=>$('toast').classList.add('hidden'),2500)}
 function toggleSidebar(){$('sidebar').classList.toggle('open');$('sidebar').classList.toggle('closed')}
 async function login(){
   $('loginError').classList.add('hidden');
-  try{const r=await new Promise((res,rej)=>google.script.run.withSuccessHandler(res).withFailureHandler(rej).login($('username').value,$('password').value));TOKEN=r.token;USER=r.user;localStorage.setItem('pos_token',TOKEN);showApp()}
+  try{const r=await call('login',{username:$('username').value.trim(),password:$('password').value});TOKEN=r.token;USER=r.user;localStorage.setItem('pos_token',TOKEN);showApp()}
   catch(e){$('loginError').textContent=e.message||e;$('loginError').classList.remove('hidden')}
 }
-function showApp(){$('loginView').classList.add('hidden');$('appView').classList.remove('hidden');$('userInfo').textContent=USER?USER.username+' • '+USER.role:'';page(currentPage)}
-async function logout(){try{await new Promise(r=>google.script.run.withSuccessHandler(r).logout(TOKEN))}catch(e){}localStorage.removeItem('pos_token');TOKEN='';location.reload()}
-async function page(name){currentPage=name;document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.page===name));$('sidebar').classList.remove('open');if(name==='dashboard')return dashboard();if(name==='products')return products();if(name==='inventory')return inventory();if(name==='sales'||name==='salesHistory')return sales(name==='salesHistory');if(name==='purchases')return purchases();if(name==='customers')return parties('customers');if(name==='suppliers')return parties('suppliers');if(name==='expenses')return expenses();if(name==='reports')return reports();if(name==='settings')return settings();if(name==='health')return health()}
+function showApp(){$('loginView').classList.add('hidden');$('appView').classList.remove('hidden');$('userInfo').textContent=USER?USER.username+' • '+USER.role:'';page(currentPage);startAutoSync()}
+async function logout(){try{await call('logout',{})}catch(e){}localStorage.removeItem('pos_token');TOKEN='';location.reload()}
+async function page(name){currentPage=name;document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.page===name));$('sidebar').classList.remove('open');if(name==='dashboard')return dashboard();if(name==='products')return products();if(name==='inventory')return inventory();if(name==='sales'||name==='salesHistory')return sales(name==='salesHistory');if(name==='purchases')return purchases();if(name==='customers')return parties('customers');if(name==='suppliers')return parties('suppliers');if(name==='expenses')return expenses();if(name==='reports')return reports();if(name==='accounting')return accounting();if(name==='syncCenter')return syncCenter();if(name==='developer')return developer();if(name==='settings')return settings();if(name==='health')return health()}
 function money(v){return '৳ '+Number(v||0).toLocaleString('en-IN',{maximumFractionDigits:2})}
 async function dashboard(){main('<div class="page-head"><h2>Dashboard</h2><button class="btn secondary" onclick="dashboard()">↻ Refresh</button></div><div id="stats" class="grid"><div class="card">Loading...</div></div><div class="two"><div class="card"><h3>Quick Actions</h3><div class="toolbar"><button class="btn" onclick="page('sales')">New Sale</button><button class="btn secondary" onclick="page('products')">Add Product</button><button class="btn secondary" onclick="page('purchases')">New Purchase</button><button class="btn secondary" onclick="page('expenses')">Add Expense</button></div></div><div class="card"><h3>System</h3><p class="muted">Google Sheets database • Apps Script backend</p><button class="btn secondary" onclick="sync()">🔄 Sync Now</button></div></div>');try{const d=await call('dashboard');$('stats').innerHTML=[['Today Sales',d.todaySales],['Today Purchase',d.todayPurchase],['Today Expense',d.todayExpense],['Net Today',d.todayNet],['Products',d.totalProducts],['Stock Value',d.stockValue],['Low Stock',d.lowStock],['Out of Stock',d.outOfStock],['Customers',d.totalCustomers],['Suppliers',d.totalSuppliers],['Customer Due',d.customerDue],['Supplier Due',d.supplierDue]].map(x=>'<div class="card stat"><div class="label">'+x[0]+'</div><div class="value">'+(typeof x[1]==='number'&&x[0]!== 'Products'&&x[0]!=='Low Stock'&&x[0]!=='Out of Stock'&&x[0]!=='Customers'&&x[0]!=='Suppliers'?money(x[1]):Number(x[1]||0).toLocaleString())+'</div></div>').join('')}catch(e){toast(e.message||e)}}
 async function products(){main('<div class="page-head"><h2>Products</h2><button class="btn" onclick="productModal()">+ Add Product</button></div><div class="card"><div class="toolbar"><input id="search" placeholder="Search product, SKU, barcode..." oninput="loadProducts()"></div><div id="table" class="table-wrap">Loading...</div></div>');loadProducts()}
@@ -159,6 +164,17 @@ const label=type==='customers'?'Customers':'Suppliers', idKey=type==='customers'
 main('<div class="page-head"><h2>'+label+'</h2><button class="btn" onclick="partyModal(\''+type+'\')">+ Add</button></div><div class="card"><div class="toolbar"><input id="search" placeholder="Search name / phone / ID..." oninput="loadParty(\''+type+'\')"></div><div id="partySummary" class="grid" style="margin-bottom:15px"></div><div id="table">Loading...</div></div>');
 loadParty(type);
 }
+function partyModal(type){
+  const customer=type==='customers';
+  const title=customer?'Add Customer':'Add Supplier';
+  modal('<div class="modal-head"><h3>'+title+'</h3><button class="btn secondary" onclick="closeModal()">✕</button></div><div class="form-grid">'+field('partyName','Name')+field('partyPhone','Phone')+field('partyEmail','Email')+field('partyAddress','Address')+field('partyDue','Opening Due','0','number')+'</div><div class="actions"><button class="btn" onclick="savePartyNew(\''+type+'\')">Save</button></div>');
+}
+async function savePartyNew(type){
+  try{
+    const p={Name:$('partyName').value,Phone:$('partyPhone').value,Email:$('partyEmail').value,Address:$('partyAddress').value,Opening_Due:Number($('partyDue').value||0),Current_Due:Number($('partyDue').value||0)};
+    await call(type==='customers'?'saveCustomer':'saveSupplier',p); closeModal(); toast('Saved successfully'); loadParty(type);
+  }catch(e){toast(e.message||e)}
+}
 async function loadParty(type){
 try{
 const r=await call(type,{search:$('search')?.value||''}), rows=r.rows||[];
@@ -204,12 +220,49 @@ async function settings(){main('<div class="page-head"><h2>Settings</h2></div><d
 async function saveSettings(){const names=['APP_NAME','CURRENCY','TAX_RATE','LOW_STOCK_DEFAULT','AUTO_SYNC','SYNC_INTERVAL','THEME','LANGUAGE'];const p={};names.forEach(k=>{if($(k))p[k]=$(k).value});try{await call('saveSettings',p);toast('Settings saved')}catch(e){toast(e.message||e)}}
 async function health(){main('<div class="page-head"><h2>System Health</h2><button class="btn secondary" onclick="health()">↻ Refresh</button></div><div id="healthBox" class="grid"><div class="card">Checking...</div></div>');try{const h=await call('health');$('healthBox').innerHTML=Object.entries(h).map(([k,v])=>'<div class="card"><div class="muted">'+k+'</div><b>'+v+'</b></div>').join('')}catch(e){toast(e.message||e)}}
 async function sync(){try{const r=await call('sync');toast('Sync: '+r.status)}catch(e){toast(e.message||e)}}
+async function reports(){
+  main('<div class="page-head"><h2>Reports</h2><div class="toolbar"><select id="reportPeriod"><option value="today">Today</option><option value="thisWeek">This Week</option><option value="thisMonth" selected>This Month</option><option value="lastMonth">Last Month</option><option value="thisYear">This Year</option></select><button class="btn" onclick="loadReports()">Generate</button></div></div><div id="reportCards" class="grid"></div><div class="two"><div class="card"><h3>Top Products</h3><div id="topProducts"></div></div><div class="card"><h3>Transaction Summary</h3><div id="reportSummary"></div></div></div>');
+  loadReports();
+}
+async function loadReports(){
+  try{
+    const r=await call('reports',{period:$('reportPeriod')?.value||'thisMonth'});
+    $('reportCards').innerHTML=[['Revenue',r.revenue],['COGS',r.cogs],['Gross Profit',r.grossProfit],['Expenses',r.expenseTotal],['Net Profit',r.netProfit],['Purchases',r.purchaseTotal]].map(x=>'<div class="card stat"><div class="label">'+x[0]+'</div><div class="value">'+money(x[1])+'</div></div>').join('');
+    $('topProducts').innerHTML=table(r.topProducts||[],['Product_Name','Sales']);
+    $('reportSummary').innerHTML='<p>Sales invoices: <b>'+r.salesCount+'</b></p><p>Purchase invoices: <b>'+r.purchaseCount+'</b></p><p>Period: <b>'+r.range.from+' → '+r.range.to+'</b></p>';
+  }catch(e){toast(e.message||e)}
+}
+async function accounting(){
+  main('<div class="page-head"><h2>Accounting</h2><button class="btn secondary" onclick="accounting()">↻ Refresh</button></div><div id="accCards" class="grid"></div><div class="card" style="margin-top:15px"><h3>Accounts</h3><div id="accTable">Loading...</div></div>');
+  try{const r=await call('accounting',{period:'thisMonth'});$('accCards').innerHTML=[['Revenue',r.revenue],['COGS',r.cogs],['Gross Profit',r.grossProfit],['Expenses',r.expenses],['Net Profit',r.netProfit],['Customer Due',r.customerDue],['Supplier Due',r.supplierDue]].map(x=>'<div class="card stat"><div class="label">'+x[0]+'</div><div class="value">'+money(x[1])+'</div></div>').join('');$('accTable').innerHTML=table(r.accounts,['Account_ID','Account_Name','Account_Type','Balance','Status'])}catch(e){toast(e.message||e)}
+}
+async function syncCenter(){
+  main('<div class="page-head"><h2>Sync Center</h2><div class="toolbar"><button class="btn" onclick="syncNow()">🔄 Sync Now</button><button class="btn secondary" onclick="pushNow()">⬆ Push to Sheets</button></div></div><div id="syncCards" class="grid"></div><div class="card" style="margin-top:15px"><p class="muted">Auto Sync default: 30 seconds. Failed changes remain pending until the next successful push/sync.</p></div>');
+  loadSyncStatus();
+}
+async function loadSyncStatus(){
+  try{const r=await call('syncStatus');$('syncCards').innerHTML=[['Status',r.status],['Auto Sync',r.autoSync?'ON':'OFF'],['Interval',r.interval+' sec'],['Pending Changes',r.pendingChanges],['Failed',r.failed],['Last Sync',r.lastSync||'—'],['Last Push',r.lastPush||'—']].map(x=>'<div class="card stat"><div class="label">'+x[0]+'</div><div class="value" style="font-size:16px">'+x[1]+'</div></div>').join('')}catch(e){toast(e.message||e)}
+}
+async function syncNow(){try{const r=await call('sync');toast('Sync completed');loadSyncStatus()}catch(e){toast(e.message||e)}}
+async function pushNow(){try{const r=await call('push');toast('Push completed');loadSyncStatus()}catch(e){toast(e.message||e)}}
+async function developer(){
+  main('<div class="page-head"><h2>Developer / Code.gs</h2><div class="toolbar"><button class="btn" onclick="loadCode()">↻ Load Code</button><button class="btn secondary" onclick="copyCode()">📋 Copy</button><button class="btn secondary" onclick="downloadCode()">💾 Download</button></div></div><div class="card"><textarea id="codeEditor" style="width:100%;min-height:520px;border:1px solid var(--border);border-radius:12px;padding:14px;font-family:monospace;font-size:12px"></textarea><div class="actions"><button class="btn secondary" onclick="saveCodeDraft()">Save Draft</button><button class="btn danger" onclick="createBackup()">Create Backup</button></div><p class="muted">Save Draft stores the code in Apps Script Script Properties; it does not auto-deploy code.</p></div>');
+  loadCode();
+}
+async function loadCode(){try{const r=await call('code');$('codeEditor').value=r;toast('Code.gs loaded')}catch(e){toast(e.message||e)}}
+async function copyCode(){try{await navigator.clipboard.writeText($('codeEditor').value);toast('Code.gs copied successfully')}catch(e){$('codeEditor').select();document.execCommand('copy');toast('Code.gs copied')}} 
+function downloadCode(){const blob=new Blob([$('codeEditor').value],{type:'text/plain'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Code.gs';a.click();URL.revokeObjectURL(a.href)}
+async function saveCodeDraft(){try{await call('saveCodeDraft',{code:$('codeEditor').value});toast('Draft saved')}catch(e){toast(e.message||e)}}
+async function createBackup(){try{const r=await call('backup');toast('Backup created: '+r.name);if(r.url)window.open(r.url,'_blank')}catch(e){toast(e.message||e)}}
 function main(x){$('main').innerHTML=x}
 function field(id,label,value='',type='text'){return '<div class="field"><label>'+label+'</label><input id="'+id+'" type="'+type+'" value="'+String(value??'').replace(/"/g,'&quot;')+'"></div>'}
 function table(rows,cols,actions){if(!rows.length)return '<p class="muted">No records found.</p>';return '<table class="table"><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+(actions?'<th>Action</th>':'')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+cols.map(c=>'<td>'+String(r[c]??'').slice(0,80)+'</td>').join('')+(actions?'<td>'+actions(r)+'</td>':'')+'</tr>').join('')+'</tbody></table>'}
 function modal(x){$('modalBox').innerHTML=x;$('modal').classList.remove('hidden')}
 function closeModal(){$('modal').classList.add('hidden')}
-if(TOKEN){google.script.run.withSuccessHandler(r=>{USER=r;showApp()}).withFailureHandler(()=>{localStorage.removeItem('pos_token');TOKEN=''}) .getSession(TOKEN)}
+async function startAutoSync(){
+  try{const s=await call('syncStatus'); if(window.syncTimer)clearInterval(window.syncTimer); if(s.autoSync&&s.interval>0) window.syncTimer=setInterval(()=>{if(TOKEN)call('sync').catch(()=>{})},s.interval*1000)}catch(e){}
+}
+if(TOKEN){call('login',{username:'',password:''}).catch(()=>{}); const hasGAS=typeof google!=='undefined'&&google.script&&google.script.run; if(hasGAS){google.script.run.withSuccessHandler(r=>{USER=r;showApp()}).withFailureHandler(()=>{localStorage.removeItem('pos_token');TOKEN=''}) .getSession(TOKEN)} else {fetch('/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,action:'getSession',payload:{}})}).then(r=>r.json()).then(r=>{if(!r.success)throw new Error();USER=r.data;showApp()}).catch(()=>{localStorage.removeItem('pos_token');TOKEN='';})}}
 </script>
 </body>
 </html>
