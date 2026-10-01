@@ -178,6 +178,7 @@ function session_(token) {
   if (!raw) throw new Error('Session expired. Please login again.');
   return JSON.parse(raw);
 }
+function getSession(token) { return session_(token); }
 function requireSession_(token, permission) {
   const s=session_(token);
   if (permission && !can_(s.role,permission)) throw new Error('Permission denied.');
