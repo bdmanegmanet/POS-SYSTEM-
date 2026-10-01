@@ -228,6 +228,9 @@ function api(token, action, payload) {
     case 'saveSettings': return saveSettings(token,p);
     case 'code': return getCode(token);
     case 'health': return systemHealth(token);
+    case 'partyLedger': return partyLedger(token,p);
+    case 'partySummary': return partySummary(token,p);
+    case 'openingBalance': return recordPartyOpeningBalance(token,p);
     case 'stockMovements': return getStockMovements(token,p);
     case 'stockAdjustment': return stockAdjustment(token,p);
     case 'lowStock': return getLowStock(token);
@@ -475,6 +478,48 @@ function returnSale(token,p){
   audit_(s.username,'CREATE','SALES_RETURN',rid,'',JSON.stringify(p),'');
   return {success:true,returnId:rid,amount};
 }
+
+function partyLedger(token,p){
+  const s=requireSession_(token,'view');
+  required_(p,['Type','Party_ID']);
+  const type=String(p.Type).toLowerCase(), id=String(p.Party_ID);
+  if(type!=='customer'&&type!=='supplier') throw new Error('Invalid party type.');
+  const key=type==='customer'?'Customer_ID':'Supplier_ID';
+  const sales=type==='customer'?getRows_('Sales').filter(r=>String(r[key])===id):[];
+  const purchases=type==='supplier'?getRows_('Purchases').filter(r=>String(r[key])===id):[];
+  const payments=getRows_('Payments').filter(r=>String(r.Party_ID)===id && String(r.Party_Type).toLowerCase()===type);
+  const entries=[];
+  sales.forEach(r=>entries.push({Date:r.Sale_Date,Type:'SALE',Reference:r.Invoice_No||r.Sale_ID,Debit:num_(r.Grand_Total),Credit:num_(r.Paid),Balance:num_(r.Due)}));
+  purchases.forEach(r=>entries.push({Date:r.Purchase_Date,Type:'PURCHASE',Reference:r.Invoice_No||r.Purchase_ID,Debit:num_(r.Grand_Total),Credit:num_(r.Paid),Balance:num_(r.Due)}));
+  payments.forEach(r=>entries.push({Date:r.Payment_Date||r.Created_At,Type:'PAYMENT',Reference:r.Reference_ID||r.Payment_ID,Debit:0,Credit:num_(r.Amount),Balance:0}));
+  entries.sort((a,b)=>new Date(a.Date)-new Date(b.Date));
+  let balance=0;
+  entries.forEach(e=>{ if(type==='customer'){balance += e.Debit-e.Credit}else{balance += e.Debit-e.Credit} e.Balance=balance; });
+  return {rows:entries.reverse(),balance};
+}
+function partySummary(token,p){
+  requireSession_(token,'view');
+  const type=String(p.Type||'customer').toLowerCase();
+  const sheet=type==='supplier'?'Suppliers':'Customers';
+  const key=type==='supplier'?'Supplier_ID':'Customer_ID';
+  const rows=getRows_(sheet).filter(r=>r.Status!=='Deleted');
+  return {rows:rows.map(normalize_)};
+}
+function recordPartyOpeningBalance(token,p){
+  const s=requireSession_(token,'edit');
+  required_(p,['Type','Party_ID','Amount']);
+  const amount=num_(p.Amount); if(amount<0) throw new Error('Amount cannot be negative.');
+  const type=String(p.Type).toLowerCase();
+  const sheet=type==='supplier'?'Suppliers':'Customers';
+  const key=type==='supplier'?'Supplier_ID':'Customer_ID';
+  const row=getRows_(sheet).find(r=>String(r[key])===String(p.Party_ID));
+  if(!row) throw new Error('Party not found.');
+  updatePartyDue_(sheet,key,p.Party_ID,amount,s.username);
+  recordPayment_(s.username,type,p.Party_ID,'OPENING',amount,p.Method||'Opening Balance',type==='supplier'?'OUT':'IN');
+  audit_(s.username,'OPENING_BALANCE',type.toUpperCase(),p.Party_ID,'',JSON.stringify(p),'');
+  return {success:true};
+}
+
 function createCustomerPayment(token,p){
   const s=requireSession_(token,'create');
   required_(p,['Customer_ID','Amount']);
